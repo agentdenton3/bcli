@@ -1,4 +1,5 @@
 use serialport::{DataBits, FlowControl, Parity, SerialPortSettings, StopBits};
+use std::convert::TryFrom;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,9 +14,48 @@ static PORT_SETTINGS: SerialPortSettings = SerialPortSettings {
     timeout: Duration::from_millis(10),
 };
 
+const SERIAL_RX_SIZE: usize = 10;
+
+#[derive(Debug)]
+pub enum OpCode {
+    CommStart,
+    CommEnd,
+    CommHalt,
+    CommError,
+    CommSend,
+}
+
+impl OpCode {
+    pub fn from_u8(n: u8) -> Result<OpCode, &'static str> {
+        match n {
+            55 => Ok(OpCode::CommStart),
+            56 => Ok(OpCode::CommEnd),
+            57 => Ok(OpCode::CommHalt),
+            58 => Ok(OpCode::CommError),
+            59 => Ok(OpCode::CommSend),
+            _ => Err("invalid opcode"),
+        }
+    }
+}
+
+impl TryFrom<u8> for OpCode {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            55 => Ok(OpCode::CommStart),
+            56 => Ok(OpCode::CommEnd),
+            57 => Ok(OpCode::CommHalt),
+            58 => Ok(OpCode::CommError),
+            59 => Ok(OpCode::CommSend),
+            _ => Err("invalid opcode"),
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct SerialData {
-    opcode: Option<u8>,
+    opcode: Option<OpCode>,
     size: Option<u8>,
     data: Option<u16>,
 }
@@ -27,7 +67,13 @@ pub fn parse_serial(bytes: &[u8]) -> SerialData {
     let raw = std::str::from_utf8(&bytes).unwrap_or("bad string");
 
     sp.opcode = match raw[0..2].parse::<u8>() {
-        Ok(opcode) => Some(opcode),
+        Ok(opcode) => {
+            if let Ok(n) = OpCode::from_u8(opcode) {
+                Some(n)
+            } else {
+                None
+            }
+        }
         Err(_e) => None,
     };
     sp.size = match raw[2..3].parse::<u8>() {
@@ -47,7 +93,7 @@ pub fn parse_serial(bytes: &[u8]) -> SerialData {
 /// if device is not available exit process.
 pub fn test_serial(fd: &str) {
     if let Ok(mut port) = serialport::open_with_settings(fd, &PORT_SETTINGS) {
-        let mut buff = vec![0; 10];
+        let mut buff = vec![0; SERIAL_RX_SIZE];
         loop {
             let bytes = port.read(&mut buff);
             match bytes {
@@ -57,7 +103,7 @@ pub fn test_serial(fd: &str) {
                         println!("raw string {:?}", raw);
                     }
                     if sp.opcode.is_some() {
-                        println!("opcode = {}", sp.opcode.unwrap());
+                        println!("opcode = {:?}", sp.opcode.unwrap());
                     }
                     if sp.size.is_some() {
                         println!("size = {}", sp.size.unwrap());
@@ -78,7 +124,32 @@ pub fn test_serial(fd: &str) {
     }
 }
 
-pub fn save_data() {}
+// TODO: replace raw string with enum
+pub fn save_data(fd: &str) {
+    if let Ok(mut port) = serialport::open_with_settings(fd, &PORT_SETTINGS) {
+        let mut buff = vec![0; SERIAL_RX_SIZE];
+        loop {
+            let bytes = port.read(&mut buff);
+            match bytes {
+                Ok(_b) => {
+                    let sp = parse_serial(&buff);
+                    match sp.opcode {
+                        Some(op) => match op {
+                            OpCode::CommStart => {
+                                port.write("56".as_bytes()).unwrap();
+                            }
+                            OpCode::CommEnd => println!("End"),
+                            _ => {}
+                        },
+                        None => {}
+                    }
+                    buff.iter_mut().for_each(|x| *x = 0);
+                }
+                Err(_e) => {}
+            }
+        }
+    }
+}
 
 /// this function is responsible for data file creation, user should not
 /// create files by himself, it can lead to unpredictable behavior
@@ -131,5 +202,6 @@ pub fn create_data_file() -> String {
 }
 
 fn main() {
-    test_serial("/dev/ttyUSB0");
+    save_data("/dev/ttyUSB0");
+    // test_serial("/dev/ttyUSB0");
 }
