@@ -13,53 +13,38 @@ static PORT_SETTINGS: SerialPortSettings = SerialPortSettings {
     timeout: Duration::from_millis(10),
 };
 
-// TODO: maybe add new(), and check on creation if data is valid
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct SerialData {
-    opcode: u8,
-    size: u8,
+    opcode: Option<u8>,
+    size: Option<u8>,
     data: Option<u16>,
 }
 
-impl SerialData {
-    pub fn new(opcode: u8, size: u8, data: Option<u16>) -> Self {
-        Self { opcode, size, data }
-    }
+/// parse bytes from serial, bytes [0..2] are opcode, [2..3] are size and
+/// everything else is data, which is 4 bytes long max
+pub fn parse_serial(bytes: &[u8]) -> SerialData {
+    let mut sp = SerialData::default();
+    let raw = std::str::from_utf8(&bytes).unwrap_or("bad string");
+
+    sp.opcode = match raw[0..2].parse::<u8>() {
+        Ok(opcode) => Some(opcode),
+        Err(_e) => None,
+    };
+    sp.size = match raw[2..3].parse::<u8>() {
+        Ok(size) => Some(size),
+        Err(_e) => None,
+    };
+
+    let tmp = raw[3..].split("\r\n").collect::<Vec<_>>()[0];
+    sp.data = match tmp.parse::<u16>() {
+        Ok(data) => Some(data),
+        Err(_e) => None,
+    };
+    sp
 }
 
-/// parse raw data from serial port
-/// n - length with \n
-/// l - length without \n
-pub fn parse_serial(raw: &str) -> Option<SerialData> {
-    // get bytes from serial
-    let s = raw.split("\r\n").collect::<Vec<_>>();
-    // first element is opcode
-    let opcode = match s.get(0) {
-        Some(elem) => elem.parse::<u8>().unwrap_or(56),
-        None => 0,
-    };
-    // second element is size of msg in bytes
-    let size = match s.get(1) {
-        Some(elem) => elem.parse::<u8>().unwrap_or(0),
-        None => 0,
-    };
-    // get length of the msg and then compare it with size
-    // l + 1 because we are considering \n at the end of msg
-    let (data, l) = match s.get(2) {
-        Some(elem) => {
-            let l = elem.len() as u8;
-            let d = elem.parse::<u16>().unwrap_or(0);
-            (d, l + 1)
-        }
-        None => (0, 1),
-    };
-    if size == l {
-        Some(SerialData::new(opcode, size, Some(data)))
-    } else {
-        None
-    }
-}
-
+/// connect to device and print valid parsed data to terminal continuously,
+/// if device is not available exit process.
 pub fn test_serial(fd: &str) {
     if let Ok(mut port) = serialport::open_with_settings(fd, &PORT_SETTINGS) {
         let mut buff = vec![0; 10];
@@ -67,27 +52,28 @@ pub fn test_serial(fd: &str) {
             let bytes = port.read(&mut buff);
             match bytes {
                 Ok(_b) => {
-                    let raw =
-                        std::str::from_utf8(&buff).unwrap_or("bad string");
-                    println!("{:?}", raw);
-                    if let Some(sd) = parse_serial(&raw) {
-                        println!("st = {:?}", sd);
+                    let sp = parse_serial(&buff);
+                    if let Ok(raw) = std::str::from_utf8(&buff) {
+                        println!("raw string {:?}", raw);
                     }
-                    // if sd.size == sd.l {
-                    //     println!("raw = {:?}", raw);
-                    //     println!("size = {}", sd.size);
-                    //     println!("data = {}", sd.data);
-                    //     println!("--------------------");
-                    // }
-                    // // TODO: find a better way
-                    // // clear buffer manually to align data,
-                    // // because buff.clear() does not workk
-                    // buff.iter_mut().for_each(|x| *x = 0);
+                    if sp.opcode.is_some() {
+                        println!("opcode = {}", sp.opcode.unwrap());
+                    }
+                    if sp.size.is_some() {
+                        println!("size = {}", sp.size.unwrap());
+                    }
+                    if sp.data.is_some() {
+                        println!("data = {}", sp.data.unwrap());
+                    }
+                    println!("---------------------------------------------");
+                    // TODO: find a better way
+                    buff.iter_mut().for_each(|x| *x = 0);
                 }
                 Err(_e) => {}
             }
         }
     } else {
+        println!("device is not available\n");
         std::process::exit(0);
     }
 }
