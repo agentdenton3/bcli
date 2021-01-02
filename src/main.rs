@@ -143,6 +143,7 @@ pub fn save_data(fd: &str) {
                         },
                         None => {}
                     }
+                    std::thread::sleep(Duration::from_millis(100));
                     buff.iter_mut().for_each(|x| *x = 0);
                 }
                 Err(_e) => {}
