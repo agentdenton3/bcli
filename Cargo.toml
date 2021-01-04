@@ -1,5 +1,5 @@
 [package]
-name = "dserial"
+name = "bcli"
 version = "0.1.0"
 authors = ["agent_denton <andybrychenko@gmail.com>"]
 edition = "2018"
